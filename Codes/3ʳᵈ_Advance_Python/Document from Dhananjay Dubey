@@ -1,0 +1,92 @@
+from tkinter import * # Import all definitions from tkinter
+
+window = Tk() # Create a window
+window.title("Grid Manager Demo") # Set title
+
+message = Message(window, text = "This Message widget occupies three rows and two columns")
+message.grid(row = 1, column = 1,  columnspan = 2)
+Label(window, text = "First Name:").grid(row = 1, column = 3)
+Entry(window).grid(row = 1, column = 4,  pady = 5)
+Label(window, text = "Last Name:").grid(row = 2, column = 3)
+Entry(window).grid(row = 2, column = 4)
+Button(window, text = "Get Name").grid(row = 3, 
+padx = 5, pady = 5, column = 4, )
+
+window.mainloop() # Create an event loop
+
+
+
+
+
+
+
+
+
+
+
+
+import tkinter.messagebox
+import tkinter.simpledialog
+import tkinter.colorchooser
+
+tkinter.messagebox.showinfo("showinfo", "This is an info msg")
+
+tkinter.messagebox.showwarning("showwarning", "This is a warning")
+
+tkinter.messagebox.showerror("showerror", "This is an error")
+ 
+isYes = tkinter.messagebox.askyesno("askyesno", "Continue?")
+print(isYes)
+
+isOK = tkinter.messagebox.askokcancel("askokcancel", "OK?")
+print(isOK)
+
+isYesNoCancel = tkinter.messagebox.askyesnocancel("askyesnocancel", "Yes, No, Cancel?") 
+print(isYesNoCancel)
+
+name = tkinter.simpledialog.askstring("askstring", "Enter your name")
+print(name)
+
+age = tkinter.simpledialog.askinteger("askinteger", "Enter your age")
+print(age)
+
+weight = tkinter.simpledialog.askfloat("askfloat", "Enter your weight")
+print(weight)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import tkinter as tk
+from PIL import Image, ImageTk
+
+# Create the main window
+root = tk.Tk()
+root.title("Pasis Olympic")
+
+# Load the image
+image = Image.open(r"C:\Users\dhana\Desktop\pasis_olympic_image.png")
+photo = ImageTk.PhotoImage(image)
+
+# Create a label to display the image
+label = tk.Label(root, image=photo)
+label.pack()
+
+# Add a symbol (e.g. the Olympic rings)
+symbol_label = tk.Label(root, text="", font=("Arial", 50))
+symbol_label.pack()
+
+
+# Start the GUI event loop
+root.mainloop()

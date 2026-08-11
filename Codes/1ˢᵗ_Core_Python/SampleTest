@@ -1,0 +1,374 @@
+# ============================================================
+# Snowflake View DDL Exporter
+# ============================================================
+#
+# Purpose:
+#   1. Connect to the current Snowflake session
+#   2. Find all views in a specified database/schema
+#   3. Get the DDL of every view using GET_DDL()
+#   4. Create one .sql file per view inside the Workspace
+#
+# Example output:
+#
+#   VIEW_DDL/
+#       ABC_VIEW.sql
+#       CUSTOMER_VIEW.sql
+#       EMPLOYEE_VIEW.sql
+#       SALES_VIEW.sql
+#
+# ============================================================
+
+
+from snowflake.snowpark.context import get_active_session
+from pathlib import Path
+import re
+
+
+# ============================================================
+# 1. CONFIGURATION
+# ============================================================
+
+# ------------------------------------------------------------
+# Enter your Database name here
+# ------------------------------------------------------------
+DATABASE = "MY_DATABASE"
+
+# ------------------------------------------------------------
+# Enter your Schema name here
+# ------------------------------------------------------------
+SCHEMA = "MY_SCHEMA"
+
+# ------------------------------------------------------------
+# Folder name that will be created inside your Workspace
+# ------------------------------------------------------------
+OUTPUT_FOLDER = "VIEW_DDL"
+
+
+# ============================================================
+# 2. GET SNOWFLAKE SESSION
+# ============================================================
+
+print("=" * 70)
+print("SNOWFLAKE VIEW DDL EXPORTER")
+print("=" * 70)
+
+print("\nConnecting to Snowflake...")
+
+session = get_active_session()
+
+print("Connection successful.")
+
+
+# ============================================================
+# 3. DISPLAY CURRENT USER / ROLE
+# ============================================================
+
+current_user = session.sql(
+    "SELECT CURRENT_USER()"
+).collect()[0][0]
+
+current_role = session.sql(
+    "SELECT CURRENT_ROLE()"
+).collect()[0][0]
+
+print(f"\nCurrent User : {current_user}")
+print(f"Current Role : {current_role}")
+
+print(f"Database     : {DATABASE}")
+print(f"Schema       : {SCHEMA}")
+
+
+# ============================================================
+# 4. CREATE OUTPUT FOLDER
+# ============================================================
+
+output_path = Path(OUTPUT_FOLDER)
+
+output_path.mkdir(
+    parents=True,
+    exist_ok=True
+)
+
+print(f"\nOutput folder: {output_path}")
+
+
+# ============================================================
+# 5. GET ALL VIEWS
+# ============================================================
+
+print("\nSearching for views...")
+
+view_query = f"""
+SELECT TABLE_NAME
+FROM {DATABASE}.INFORMATION_SCHEMA.VIEWS
+WHERE TABLE_SCHEMA = '{SCHEMA}'
+ORDER BY TABLE_NAME
+"""
+
+view_result = session.sql(view_query).collect()
+
+view_names = [
+    row["TABLE_NAME"]
+    for row in view_result
+]
+
+
+# ============================================================
+# 6. CHECK WHETHER VIEWS EXIST
+# ============================================================
+
+if not view_names:
+
+    print("\nNo views were found.")
+
+    print(
+        f"Database : {DATABASE}"
+    )
+
+    print(
+        f"Schema   : {SCHEMA}"
+    )
+
+    print("\nProgram finished.")
+
+else:
+
+    print(
+        f"\nFound {len(view_names)} view(s)."
+    )
+
+
+# ============================================================
+# 7. FUNCTION TO SAFELY CREATE FILE NAMES
+# ============================================================
+
+def safe_filename(name):
+
+    # Replace characters that are not normally suitable
+    # for file names.
+
+    return re.sub(
+        r'[<>:"/\\|?*]',
+        "_",
+        name
+    )
+
+
+# ============================================================
+# 8. EXPORT EACH VIEW
+# ============================================================
+
+success_count = 0
+failed_count = 0
+
+failed_views = []
+
+
+for index, view_name in enumerate(view_names, start=1):
+
+    print("\n" + "-" * 70)
+
+    print(
+        f"Processing {index}/{len(view_names)} : {view_name}"
+    )
+
+    try:
+
+        # ----------------------------------------------------
+        # Build fully-qualified View name
+        # ----------------------------------------------------
+
+        fully_qualified_view = (
+            f'"{DATABASE}"."{SCHEMA}"."{view_name}"'
+        )
+
+
+        # ----------------------------------------------------
+        # Escape single quotes for SQL string literal
+        # ----------------------------------------------------
+
+        ddl_target = fully_qualified_view.replace(
+            "'",
+            "''"
+        )
+
+
+        # ----------------------------------------------------
+        # Get View DDL
+        # ----------------------------------------------------
+
+        ddl_query = f"""
+        SELECT GET_DDL(
+            'VIEW',
+            '{ddl_target}',
+            TRUE
+        )
+        """
+
+        ddl_result = session.sql(
+            ddl_query
+        ).collect()
+
+
+        # ----------------------------------------------------
+        # Extract DDL
+        # ----------------------------------------------------
+
+        ddl = ddl_result[0][0]
+
+
+        if ddl is None:
+
+            raise Exception(
+                "GET_DDL returned NULL."
+            )
+
+
+        # ----------------------------------------------------
+        # Create file name
+        # ----------------------------------------------------
+
+        file_name = (
+            safe_filename(view_name)
+            + ".sql"
+        )
+
+
+        file_path = (
+            output_path
+            / file_name
+        )
+
+
+        # ----------------------------------------------------
+        # Write DDL into SQL file
+        # ----------------------------------------------------
+
+        with open(
+            file_path,
+            "w",
+            encoding="utf-8"
+        ) as sql_file:
+
+            sql_file.write(ddl)
+
+            # Make sure the file ends with newline
+            if not ddl.endswith("\n"):
+                sql_file.write("\n")
+
+
+        # ----------------------------------------------------
+        # Success
+        # ----------------------------------------------------
+
+        success_count += 1
+
+        print(
+            f"SUCCESS : {file_name}"
+        )
+
+
+    except Exception as error:
+
+        # ----------------------------------------------------
+        # Error handling
+        # ----------------------------------------------------
+
+        failed_count += 1
+
+        failed_views.append(
+            (
+                view_name,
+                str(error)
+            )
+        )
+
+        print(
+            f"FAILED  : {view_name}"
+        )
+
+        print(
+            f"ERROR   : {error}"
+        )
+
+
+# ============================================================
+# 9. FINAL SUMMARY
+# ============================================================
+
+print("\n")
+print("=" * 70)
+print("EXPORT COMPLETED")
+print("=" * 70)
+
+print(
+    f"Database        : {DATABASE}"
+)
+
+print(
+    f"Schema          : {SCHEMA}"
+)
+
+print(
+    f"Total Views     : {len(view_names)}"
+)
+
+print(
+    f"Successful      : {success_count}"
+)
+
+print(
+    f"Failed          : {failed_count}"
+)
+
+print(
+    f"Output Folder   : {output_path}"
+)
+
+
+# ============================================================
+# 10. DISPLAY FAILED VIEWS
+# ============================================================
+
+if failed_views:
+
+    print("\n")
+    print("=" * 70)
+    print("FAILED VIEWS")
+    print("=" * 70)
+
+    for view_name, error in failed_views:
+
+        print(
+            f"\nView : {view_name}"
+        )
+
+        print(
+            f"Error: {error}"
+        )
+
+
+# ============================================================
+# 11. LIST CREATED FILES
+# ============================================================
+
+print("\n")
+print("=" * 70)
+print("CREATED SQL FILES")
+print("=" * 70)
+
+
+created_files = list(
+    output_path.glob("*.sql")
+)
+
+
+for file in sorted(created_files):
+
+    print(
+        f"✓ {file.name}"
+    )
+
+
+print("\n")
+print("Done.")

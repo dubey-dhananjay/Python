@@ -1,374 +1,1343 @@
-# ============================================================
-# Snowflake View DDL Exporter
-# ============================================================
-#
-# Purpose:
-#   1. Connect to the current Snowflake session
-#   2. Find all views in a specified database/schema
-#   3. Get the DDL of every view using GET_DDL()
-#   4. Create one .sql file per view inside the Workspace
-#
-# Example output:
-#
-#   VIEW_DDL/
-#       ABC_VIEW.sql
-#       CUSTOMER_VIEW.sql
-#       EMPLOYEE_VIEW.sql
-#       SALES_VIEW.sql
-#
-# ============================================================
+You are a Senior Python Developer and SQL Static Code Analysis Engineer.
 
+I want you to build a production-quality Python application called:
 
-from snowflake.snowpark.context import get_active_session
-from pathlib import Path
-import re
+SQL Hardcoded Value Analyzer
 
+IMPORTANT:
+- Use PURE PYTHON only.
+- DO NOT use any LLM.
+- DO NOT use OpenAI.
+- DO NOT use Azure OpenAI.
+- DO NOT use any external AI API.
+- DO NOT use internet/web services.
+- The entire analysis must happen locally on the machine.
+- The application must work on Windows.
+- The input will be one or more .sql files placed inside an INPUT folder.
+- The output must be generated automatically as CSV files inside an OUTPUT folder.
+- Do not hardcode values from my sample SQL.
+- The program must analyze the actual SQL files placed in the folder.
 
-# ============================================================
-# 1. CONFIGURATION
-# ============================================================
+========================================================
+1. OBJECTIVE
+========================================================
 
-# ------------------------------------------------------------
-# Enter your Database name here
-# ------------------------------------------------------------
-DATABASE = "MY_DATABASE"
+Build a Python-based static SQL analyzer that scans SQL files
+containing approximately 400–500+ lines and identifies
+hardcoded values embedded in SQL logic.
 
-# ------------------------------------------------------------
-# Enter your Schema name here
-# ------------------------------------------------------------
-SCHEMA = "MY_SCHEMA"
+The purpose is to identify values that may need to be:
+- parameterized
+- moved to configuration
+- moved to reference/master tables
+- converted to ADF parameters
+- reviewed during SQL/ADF migration
 
-# ------------------------------------------------------------
-# Folder name that will be created inside your Workspace
-# ------------------------------------------------------------
-OUTPUT_FOLDER = "VIEW_DDL"
+The analyzer must NOT simply extract every string.
 
+It must understand the surrounding SQL context.
 
-# ============================================================
-# 2. GET SNOWFLAKE SESSION
-# ============================================================
+Example:
 
-print("=" * 70)
-print("SNOWFLAKE VIEW DDL EXPORTER")
-print("=" * 70)
-
-print("\nConnecting to Snowflake...")
-
-session = get_active_session()
-
-print("Connection successful.")
-
-
-# ============================================================
-# 3. DISPLAY CURRENT USER / ROLE
-# ============================================================
-
-current_user = session.sql(
-    "SELECT CURRENT_USER()"
-).collect()[0][0]
-
-current_role = session.sql(
-    "SELECT CURRENT_ROLE()"
-).collect()[0][0]
-
-print(f"\nCurrent User : {current_user}")
-print(f"Current Role : {current_role}")
-
-print(f"Database     : {DATABASE}")
-print(f"Schema       : {SCHEMA}")
-
-
-# ============================================================
-# 4. CREATE OUTPUT FOLDER
-# ============================================================
-
-output_path = Path(OUTPUT_FOLDER)
-
-output_path.mkdir(
-    parents=True,
-    exist_ok=True
+WHERE BSET.KSCHL IN
+(
+    'XR1',
+    'XR2',
+    'XR3',
+    'XR4',
+    'XRS',
+    'XR6',
+    'XP1E',
+    'XP2E',
+    'XP3E',
+    'XP4E'
 )
 
-print(f"\nOutput folder: {output_path}")
+AND NVL(BSET.SLT_DELETE, '') <> 'X'
+
+Expected hardcoded values:
+
+XR1
+XR2
+XR3
+XR4
+XRS
+XR6
+XP1E
+XP2E
+XP3E
+XP4E
+X
 
+The following are NOT hardcoded values:
 
-# ============================================================
-# 5. GET ALL VIEWS
-# ============================================================
+BSET.KSCHL
+BSET.SLT_DELETE
 
-print("\nSearching for views...")
+because they are column references.
 
-view_query = f"""
-SELECT TABLE_NAME
-FROM {DATABASE}.INFORMATION_SCHEMA.VIEWS
-WHERE TABLE_SCHEMA = '{SCHEMA}'
-ORDER BY TABLE_NAME
-"""
+========================================================
+2. INPUT / OUTPUT FOLDER STRUCTURE
+========================================================
 
-view_result = session.sql(view_query).collect()
+Create this folder structure:
 
-view_names = [
-    row["TABLE_NAME"]
-    for row in view_result
-]
+SQL_Hardcoded_Analyzer/
+│
+├── input/
+│   └── *.sql
+│
+├── output/
+│
+├── logs/
+│
+├── config/
+│   └── config.json
+│
+├── src/
+│   ├── main.py
+│   ├── sql_reader.py
+│   ├── sql_cleaner.py
+│   ├── tokenizer.py
+│   ├── context_analyzer.py
+│   ├── hardcode_detector.py
+│   ├── classifier.py
+│   ├── confidence.py
+│   ├── csv_writer.py
+│   └── utils.py
+│
+├── requirements.txt
+└── README.md
 
+The application should also work if all logic is initially
+implemented in a single main.py file.
 
-# ============================================================
-# 6. CHECK WHETHER VIEWS EXIST
-# ============================================================
+Prefer modular architecture because this tool will evolve.
 
-if not view_names:
+========================================================
+3. INPUT FILE HANDLING
+========================================================
 
-    print("\nNo views were found.")
+The application must automatically scan:
 
-    print(
-        f"Database : {DATABASE}"
-    )
+./input/
 
-    print(
-        f"Schema   : {SCHEMA}"
-    )
+for:
 
-    print("\nProgram finished.")
+*.sql
 
-else:
+It should support:
 
-    print(
-        f"\nFound {len(view_names)} view(s)."
-    )
+- one SQL file
+- multiple SQL files
+- large SQL files
+- UTF-8
+- UTF-8 with BOM
+- Windows line endings
+- Unix line endings
 
+Do not assume the SQL filename.
 
-# ============================================================
-# 7. FUNCTION TO SAFELY CREATE FILE NAMES
-# ============================================================
+For every SQL file:
 
-def safe_filename(name):
+1. Read the file.
+2. Preserve original line numbers.
+3. Preserve original source line text.
+4. Analyze the SQL.
+5. Generate findings.
+6. Continue processing other files even if one file fails.
 
-    # Replace characters that are not normally suitable
-    # for file names.
+Never silently ignore an error.
 
-    return re.sub(
-        r'[<>:"/\\|?*]',
-        "_",
-        name
-    )
+========================================================
+4. DO NOT MODIFY THE SOURCE SQL
+========================================================
 
+The program must NEVER modify the input SQL files.
 
-# ============================================================
-# 8. EXPORT EACH VIEW
-# ============================================================
+It must only read them.
 
-success_count = 0
-failed_count = 0
+========================================================
+5. SQL COMMENTS
+========================================================
 
-failed_views = []
+The analyzer must understand SQL comments.
 
+Handle:
 
-for index, view_name in enumerate(view_names, start=1):
+-- single line comments
 
-    print("\n" + "-" * 70)
+and:
 
-    print(
-        f"Processing {index}/{len(view_names)} : {view_name}"
-    )
+/*
+   multi-line comments
+*/
 
-    try:
+Values inside comments must NOT be classified as
+hardcoded values.
 
-        # ----------------------------------------------------
-        # Build fully-qualified View name
-        # ----------------------------------------------------
+However:
 
-        fully_qualified_view = (
-            f'"{DATABASE}"."{SCHEMA}"."{view_name}"'
-        )
+- preserve original line numbers
+- preserve original source text for reporting
 
+Example:
 
-        # ----------------------------------------------------
-        # Escape single quotes for SQL string literal
-        # ----------------------------------------------------
+-- WHERE STATUS = 'ABC'
 
-        ddl_target = fully_qualified_view.replace(
-            "'",
-            "''"
-        )
+This must NOT generate:
 
+ABC
 
-        # ----------------------------------------------------
-        # Get View DDL
-        # ----------------------------------------------------
+========================================================
+6. STRING LITERAL DETECTION
+========================================================
 
-        ddl_query = f"""
-        SELECT GET_DDL(
-            'VIEW',
-            '{ddl_target}',
-            TRUE
-        )
-        """
+Detect SQL string literals.
 
-        ddl_result = session.sql(
-            ddl_query
-        ).collect()
+Examples:
 
+'XR1'
+'ABC'
+'X'
+'SAP'
+'PROD'
+'2026-01-01'
+'CUSTOMER'
+'https://example.com'
 
-        # ----------------------------------------------------
-        # Extract DDL
-        # ----------------------------------------------------
+Handle escaped SQL quotes:
 
-        ddl = ddl_result[0][0]
+'John''s'
 
+This represents:
 
-        if ddl is None:
+John's
 
-            raise Exception(
-                "GET_DDL returned NULL."
-            )
+Do not incorrectly split the value.
 
+========================================================
+7. IMPORTANT: CONTEXT-AWARE ANALYSIS
+========================================================
 
-        # ----------------------------------------------------
-        # Create file name
-        # ----------------------------------------------------
+Do NOT classify every string literal as a hardcoded value.
 
-        file_name = (
-            safe_filename(view_name)
-            + ".sql"
-        )
+Determine its SQL context.
 
+Analyze whether the value occurs in:
 
-        file_path = (
-            output_path
-            / file_name
-        )
+- WHERE
+- HAVING
+- JOIN
+- ON
+- CASE
+- WHEN
+- THEN
+- ELSE
+- IN
+- NOT IN
+- =
+- <>
+- !=
+- >
+- <
+- >=
+- <=
+- LIKE
+- NOT LIKE
+- BETWEEN
+- INSERT
+- UPDATE
+- MERGE
+- DELETE
+- VALUES
+- function arguments
 
+========================================================
+8. IN CLAUSE DETECTION
+========================================================
 
-        # ----------------------------------------------------
-        # Write DDL into SQL file
-        # ----------------------------------------------------
+This is a high-priority requirement.
 
-        with open(
-            file_path,
-            "w",
-            encoding="utf-8"
-        ) as sql_file:
+Detect patterns such as:
 
-            sql_file.write(ddl)
+COLUMN IN ('A','B','C')
 
-            # Make sure the file ends with newline
-            if not ddl.endswith("\n"):
-                sql_file.write("\n")
-
-
-        # ----------------------------------------------------
-        # Success
-        # ----------------------------------------------------
-
-        success_count += 1
-
-        print(
-            f"SUCCESS : {file_name}"
-        )
-
-
-    except Exception as error:
-
-        # ----------------------------------------------------
-        # Error handling
-        # ----------------------------------------------------
-
-        failed_count += 1
-
-        failed_views.append(
-            (
-                view_name,
-                str(error)
-            )
-        )
-
-        print(
-            f"FAILED  : {view_name}"
-        )
-
-        print(
-            f"ERROR   : {error}"
-        )
-
-
-# ============================================================
-# 9. FINAL SUMMARY
-# ============================================================
-
-print("\n")
-print("=" * 70)
-print("EXPORT COMPLETED")
-print("=" * 70)
-
-print(
-    f"Database        : {DATABASE}"
+COLUMN IN (
+    'A',
+    'B',
+    'C'
 )
 
-print(
-    f"Schema          : {SCHEMA}"
+COLUMN NOT IN ('A','B','C')
+
+Every literal inside the IN list must be reported individually.
+
+Example:
+
+BSET.KSCHL IN ('XR1','XR2','XR3')
+
+Output:
+
+XR1
+XR2
+XR3
+
+with:
+
+Column = BSET.KSCHL
+Operator = IN
+
+========================================================
+9. COLUMN REFERENCE DETECTION
+========================================================
+
+Do NOT classify identifiers as hardcoded values.
+
+Examples:
+
+BSET.KSCHL
+BSET.SLT_DELETE
+BKPF.BUDAT
+BKPF.BLDAT
+BSET.BUKRS
+BSET.BELNR
+BKPF.XBLNR
+
+These are column references.
+
+Recognize:
+
+TABLE.COLUMN
+
+and, where possible:
+
+DATABASE.SCHEMA.TABLE
+SCHEMA.TABLE
+TABLE
+
+Do not confuse identifiers with string literals.
+
+========================================================
+10. TABLE DETECTION
+========================================================
+
+Detect table references from:
+
+FROM
+JOIN
+LEFT JOIN
+RIGHT JOIN
+FULL JOIN
+INNER JOIN
+CROSS JOIN
+INSERT INTO
+UPDATE
+DELETE FROM
+MERGE INTO
+USING
+
+Examples:
+
+FROM DB.SCHEMA.CUSTOMER
+
+JOIN DB.SCHEMA.SALES
+
+INSERT INTO DB.SCHEMA.TARGET
+
+Extract:
+
+Database
+Schema
+Table
+Full Qualified Name
+Operation
+Line Number
+
+Do not classify table names as business hardcoded values.
+
+========================================================
+11. DATABASE / SCHEMA DETECTION
+========================================================
+
+Detect fully qualified objects.
+
+Examples:
+
+DATABASE.SCHEMA.TABLE
+
+SCHEMA.TABLE
+
+TABLE
+
+If the SQL contains:
+
+PROD_DB.SALES.CUSTOMER_FACT
+
+extract:
+
+Database = PROD_DB
+Schema = SALES
+Table = CUSTOMER_FACT
+Full Name = PROD_DB.SALES.CUSTOMER_FACT
+
+========================================================
+12. DATE HARDcoded VALUES
+========================================================
+
+Detect explicitly hardcoded dates.
+
+Examples:
+
+'2026-01-01'
+
+'2026/01/01'
+
+'01-01-2026'
+
+DATE '2026-01-01'
+
+TIMESTAMP '2026-01-01 10:00:00'
+
+Classify as:
+
+DATE_LITERAL
+
+Do NOT classify:
+
+CURRENT_DATE
+CURRENT_TIMESTAMP
+GETDATE()
+SYSDATE
+
+as hardcoded dates.
+
+========================================================
+13. NUMERIC HARDcoded VALUES
+========================================================
+
+Detect numeric literals where meaningful.
+
+Examples:
+
+100
+1000
+-7
+0
+1
+99.99
+
+But do not blindly classify every SQL numeric value.
+
+For example:
+
+SELECT TOP 100
+
+may be:
+
+SQL_CONTROL_VALUE
+
+Whereas:
+
+WHERE COMPANY_CODE = 1000
+
+may be:
+
+BUSINESS_CONSTANT
+
+Use context.
+
+========================================================
+14. URL DETECTION
+========================================================
+
+Detect hardcoded URLs.
+
+Examples:
+
+http://...
+https://...
+
+Classify:
+
+URL
+
+Capture the complete URL.
+
+========================================================
+15. FILE PATH DETECTION
+========================================================
+
+Detect hardcoded file paths where possible.
+
+Examples:
+
+C:\data\input.csv
+
+/data/input/file.csv
+
+\\server\folder\file.csv
+
+abfss://container@account.dfs.core.windows.net/path
+
+Classify as:
+
+FILE_PATH
+
+========================================================
+16. ADF EXPRESSION DETECTION
+========================================================
+
+The SQL may be used from Azure Data Factory.
+
+Detect expressions such as:
+
+@pipeline().parameters.X
+
+pipeline().parameters.X
+
+@variables('X')
+
+variables('X')
+
+activity('ActivityName').output
+
+item()
+
+trigger()
+
+dataset()
+
+These must NOT be classified as hardcoded values.
+
+Instead classify them as:
+
+ADF_PARAMETER
+ADF_VARIABLE
+ADF_ACTIVITY_OUTPUT
+ADF_DYNAMIC_EXPRESSION
+
+depending on the expression.
+
+========================================================
+17. HARD CODED VALUE CATEGORIES
+========================================================
+
+Use these categories:
+
+BUSINESS_CONSTANT
+STATUS_CODE
+SYSTEM_CODE
+ENVIRONMENT_VALUE
+CONFIGURATION_VALUE
+DATE_LITERAL
+NUMERIC_CONSTANT
+SQL_CONTROL_VALUE
+URL
+FILE_PATH
+STRING_LITERAL
+TABLE
+SCHEMA
+DATABASE
+COLUMN_REFERENCE
+STORED_PROCEDURE
+ADF_PARAMETER
+ADF_VARIABLE
+ADF_ACTIVITY_OUTPUT
+ADF_DYNAMIC_EXPRESSION
+UNKNOWN
+
+========================================================
+18. EXAMPLES OF CLASSIFICATION
+========================================================
+
+Example 1:
+
+WHERE STATUS = 'A'
+
+Output:
+
+Value = A
+Category = STATUS_CODE
+Column = STATUS
+Operator = =
+Hardcoded = YES
+
+
+Example 2:
+
+WHERE COMPANY_CODE = '1000'
+
+Output:
+
+Value = 1000
+Category = BUSINESS_CONSTANT
+Column = COMPANY_CODE
+Operator = =
+Hardcoded = YES
+
+
+Example 3:
+
+WHERE BSET.KSCHL IN ('XR1','XR2','XR3')
+
+Output:
+
+XR1 BUSINESS_CONSTANT
+XR2 BUSINESS_CONSTANT
+XR3 BUSINESS_CONSTANT
+
+Column = BSET.KSCHL
+Operator = IN
+
+
+Example 4:
+
+AND NVL(BSET.SLT_DELETE, '') <> 'X'
+
+The value:
+
+X
+
+must be detected.
+
+The empty string:
+
+''
+
+should generally be classified as:
+
+SQL_CONTROL_VALUE
+
+or:
+
+DEFAULT_VALUE
+
+Do not ignore it automatically.
+
+
+Example 5:
+
+FROM PROD_DB.SALES.CUSTOMER
+
+Do NOT report:
+
+PROD_DB
+SALES
+CUSTOMER
+
+as generic hardcoded business values.
+
+Instead report them separately as:
+
+DATABASE
+SCHEMA
+TABLE
+
+
+Example 6:
+
+WHERE LOAD_DATE >= CURRENT_DATE
+
+CURRENT_DATE is NOT hardcoded.
+
+
+Example 7:
+
+WHERE LOAD_DATE >= '2026-01-01'
+
+2026-01-01 IS hardcoded.
+
+
+Example 8:
+
+WHERE SOURCE_SYSTEM = 'SAP'
+
+SAP is a hardcoded system/business value.
+
+
+========================================================
+19. CONTEXT EXTRACTION
+========================================================
+
+For every finding, capture:
+
+- file_name
+- line_number
+- column_number
+- source_line
+- context_before
+- context_after
+- full_context
+
+At minimum, provide the complete SQL line.
+
+Preferably include:
+
+2 lines before
++
+current line
++
+2 lines after
+
+where available.
+
+========================================================
+20. CONFIDENCE SCORING
+========================================================
+
+Every finding must receive:
+
+confidence_level
+confidence_score
+
+Use:
+
+HIGH = 90–100
+MEDIUM = 70–89
+LOW = 0–69
+
+Examples:
+
+Explicit value in IN clause:
+
+HIGH
+
+Explicit date:
+
+HIGH
+
+Explicit URL:
+
+HIGH
+
+ADF parameter:
+
+HIGH
+
+Possible business value inside WHERE:
+
+MEDIUM
+
+Generic string literal:
+
+LOW
+
+========================================================
+21. REASON FIELD
+========================================================
+
+Every finding must contain a short explanation.
+
+Example:
+
+"Fixed literal supplied inside an IN predicate."
+
+or:
+
+"Explicit date literal found in WHERE condition."
+
+or:
+
+"Identifier detected as table reference, not hardcoded business value."
+
+========================================================
+22. RECOMMENDATION FIELD
+========================================================
+
+For hardcoded business/configuration values, provide:
+
+"Consider moving to configuration or reference table."
+
+For dates:
+
+"Consider using ADF parameter or dynamic date logic."
+
+For URLs:
+
+"Consider storing URL in configuration."
+
+For environment values:
+
+"Consider environment-specific configuration."
+
+For normal SQL control values:
+
+"Review whether this value is intentionally fixed."
+
+========================================================
+23. DEDUPLICATION
+========================================================
+
+Do not lose occurrences.
+
+Example:
+
+'X'
+
+appears 5 times.
+
+Each occurrence must be preserved.
+
+However, also generate a summary showing:
+
+X → 5 occurrences
+
+Therefore create:
+
+1. Detailed findings
+2. Aggregated summary
+
+========================================================
+24. CSV OUTPUT
+========================================================
+
+Generate:
+
+output/sql_hardcoded_values.csv
+
+Columns:
+
+ID
+FILE_NAME
+LINE_NUMBER
+COLUMN_NUMBER
+VALUE
+CATEGORY
+COLUMN_REFERENCE
+OPERATOR
+SQL_CONTEXT
+SOURCE_LINE
+CONFIDENCE_LEVEL
+CONFIDENCE_SCORE
+IS_HARDCODED
+IS_DYNAMIC
+REASON
+RECOMMENDATION
+RULE
+FINGERPRINT
+
+========================================================
+25. SECOND CSV
+========================================================
+
+Generate:
+
+output/sql_hardcoded_summary.csv
+
+Columns:
+
+VALUE
+CATEGORY
+OCCURRENCE_COUNT
+FILES
+LINES
+COLUMNS
+CONFIDENCE_LEVEL
+
+Example:
+
+XR1 | BUSINESS_CONSTANT | 4 | file1.sql | 42,100,220,350 | BSET.KSCHL | HIGH
+
+========================================================
+26. THIRD CSV
+========================================================
+
+Generate:
+
+output/sql_tables.csv
+
+Columns:
+
+FILE_NAME
+LINE_NUMBER
+OPERATION
+DATABASE
+SCHEMA
+TABLE
+FULLY_QUALIFIED_NAME
+ALIAS
+CONFIDENCE
+
+========================================================
+27. FOURTH CSV
+========================================================
+
+Generate:
+
+output/sql_adf_expressions.csv
+
+Columns:
+
+FILE_NAME
+LINE_NUMBER
+EXPRESSION
+TYPE
+SOURCE_LINE
+IS_DYNAMIC
+CONFIDENCE
+
+========================================================
+28. REVIEW CSV
+========================================================
+
+Generate:
+
+output/sql_review_required.csv
+
+This should contain only ambiguous findings.
+
+Columns:
+
+FILE_NAME
+LINE_NUMBER
+VALUE
+CATEGORY
+COLUMN_REFERENCE
+SQL_CONTEXT
+CONFIDENCE_LEVEL
+REASON
+RECOMMENDATION
+
+========================================================
+29. CONFIGURATION
+========================================================
+
+Create:
+
+config/config.json
+
+Example:
+
+{
+    "input_folder": "./input",
+    "output_folder": "./output",
+    "log_folder": "./logs",
+    "context_lines_before": 2,
+    "context_lines_after": 2,
+    "high_confidence_threshold": 90,
+    "medium_confidence_threshold": 70
+}
+
+Do not hardcode these settings in Python where practical.
+
+========================================================
+30. LOGGING
+========================================================
+
+Create:
+
+logs/analyzer.log
+
+Log:
+
+- start time
+- files discovered
+- file currently being processed
+- number of lines
+- number of findings
+- number of tables
+- number of ADF expressions
+- number of review items
+- errors
+- completion time
+
+========================================================
+31. ERROR HANDLING
+========================================================
+
+The program must be production-quality.
+
+Use:
+
+try/except/finally
+
+Handle:
+
+- missing input folder
+- empty input folder
+- invalid SQL encoding
+- malformed SQL
+- permission errors
+- CSV write errors
+- unexpected exceptions
+
+One bad SQL file must not stop processing of all other files.
+
+========================================================
+32. NO FALSE POSITIVES
+========================================================
+
+This is extremely important.
+
+Do NOT simply do:
+
+re.findall(r"'(.*?)'", sql)
+
+and call everything hardcoded.
+
+The analyzer must use context.
+
+For example:
+
+SELECT
+    BSET.KSCHL,
+    BSET.SLT_DELETE,
+    BKPF.BUDAT
+
+These are NOT hardcoded values.
+
+But:
+
+WHERE BSET.KSCHL IN ('XR1','XR2')
+
+contains hardcoded values.
+
+========================================================
+33. SQL DIALECT
+========================================================
+
+The code should be designed primarily for:
+
+Snowflake SQL
+
+but should tolerate common SQL syntax from:
+
+Oracle
+SQL Server
+ANSI SQL
+SAP-related SQL
+
+Do not make Snowflake-specific assumptions unless necessary.
+
+========================================================
+34. PERFORMANCE
+========================================================
+
+The application should easily process:
+
+500 lines
+5,000 lines
+50,000 lines
+
+without unnecessary complexity.
+
+Avoid repeatedly scanning the entire SQL file for every token.
+
+Prefer:
+
+- one preprocessing pass
+- tokenization
+- contextual analysis
+- classification
+- output generation
+
+========================================================
+35. SECURITY
+========================================================
+
+The program must:
+
+- run completely locally
+- make no network calls
+- make no API calls
+- never upload SQL content
+- never send SQL content outside the machine
+
+No telemetry.
+
+No external services.
+
+========================================================
+36. DEPENDENCIES
+========================================================
+
+Keep dependencies minimal.
+
+Prefer Python standard library.
+
+If required, use only well-established packages.
+
+Potential packages:
+
+pandas
+openpyxl
+
+However, CSV generation should preferably use Python's built-in:
+
+csv
+
+module.
+
+Do NOT require pandas unless it provides a real benefit.
+
+========================================================
+37. COMMAND LINE
+========================================================
+
+Support:
+
+python src/main.py
+
+Default behavior:
+
+Read:
+
+./input/
+
+Write:
+
+./output/
+
+Also support:
+
+python src/main.py --input ./input --output ./output
+
+And:
+
+python src/main.py --file ./input/test.sql
+
+========================================================
+38. FINAL CONSOLE OUTPUT
+========================================================
+
+After completion print something like:
+
+==================================================
+SQL HARDCODED VALUE ANALYZER
+==================================================
+
+Files processed       : 3
+Total SQL lines       : 1,487
+
+Hardcoded values      : 126
+High confidence       : 93
+Medium confidence     : 21
+Low confidence        : 12
+
+Tables detected       : 28
+ADF expressions       : 37
+Review required       : 18
+
+Output:
+
+output/sql_hardcoded_values.csv
+output/sql_hardcoded_summary.csv
+output/sql_tables.csv
+output/sql_adf_expressions.csv
+output/sql_review_required.csv
+
+Status: COMPLETED
+==================================================
+
+========================================================
+39. TESTING
+========================================================
+
+Create:
+
+tests/
+
+with test SQL files.
+
+At minimum test:
+
+1. IN clause
+2. NOT IN clause
+3. WHERE equality
+4. dates
+5. numeric values
+6. URLs
+7. tables
+8. schemas
+9. database names
+10. ADF parameters
+11. comments
+12. multiline IN clause
+13. escaped quotes
+14. CASE expressions
+15. JOIN conditions
+16. multiple SQL files
+17. duplicate values
+18. malformed SQL
+19. empty SQL file
+
+Use Python unittest or pytest.
+
+========================================================
+40. SAMPLE TEST CASE
+========================================================
+
+Create:
+
+tests/sample.sql
+
+containing:
+
+SELECT
+    BSET.KSCHL,
+    BSET.SLT_DELETE,
+    BKPF.BUDAT,
+    BKPF.BLDAT
+FROM PROD_DB.SAP.BSET BSET
+JOIN PROD_DB.SAP.BKPF BKPF
+    ON BSET.BELNR = BKPF.BELNR
+WHERE BSET.KSCHL IN (
+    'XR1',
+    'XR2',
+    'XR3',
+    'XP1E',
+    'XP2E'
 )
+AND NVL(BSET.SLT_DELETE, '') <> 'X'
+AND BSET.BUKRS = '1000'
+AND BKPF.BUDAT >= '2026-01-01'
+AND SOURCE_SYSTEM = 'SAP';
 
-print(
-    f"Total Views     : {len(view_names)}"
-)
+Expected important findings:
 
-print(
-    f"Successful      : {success_count}"
-)
+XR1
+XR2
+XR3
+XP1E
+XP2E
+X
+1000
+2026-01-01
+SAP
 
-print(
-    f"Failed          : {failed_count}"
-)
+Expected table:
 
-print(
-    f"Output Folder   : {output_path}"
-)
+PROD_DB.SAP.BSET
+PROD_DB.SAP.BKPF
 
+Expected column references:
 
-# ============================================================
-# 10. DISPLAY FAILED VIEWS
-# ============================================================
+BSET.KSCHL
+BSET.SLT_DELETE
+BKPF.BUDAT
+BKPF.BLDAT
+BSET.BUKRS
 
-if failed_views:
+Do not classify the column references as hardcoded values.
 
-    print("\n")
-    print("=" * 70)
-    print("FAILED VIEWS")
-    print("=" * 70)
+========================================================
+41. CODE QUALITY
+========================================================
 
-    for view_name, error in failed_views:
+Write clean production-quality Python.
 
-        print(
-            f"\nView : {view_name}"
-        )
+Requirements:
 
-        print(
-            f"Error: {error}"
-        )
+- type hints
+- docstrings
+- meaningful variable names
+- modular classes/functions
+- no unnecessary global variables
+- no duplicated logic
+- logging
+- exception handling
+- testable functions
+- configuration-driven behavior
 
+Use:
 
-# ============================================================
-# 11. LIST CREATED FILES
-# ============================================================
+if __name__ == "__main__":
 
-print("\n")
-print("=" * 70)
-print("CREATED SQL FILES")
-print("=" * 70)
+properly.
 
+========================================================
+42. IMPORTANT DESIGN PRINCIPLE
+========================================================
 
-created_files = list(
-    output_path.glob("*.sql")
-)
+The analyzer must distinguish between:
 
+A. Literal values
 
-for file in sorted(created_files):
+B. Identifiers
 
-    print(
-        f"✓ {file.name}"
-    )
+C. SQL keywords
 
+D. Table references
 
-print("\n")
-print("Done.")
+E. Column references
+
+F. ADF dynamic expressions
+
+G. Business constants
+
+H. Configuration values
+
+The most important goal is:
+
+HIGH PRECISION
+
+rather than simply returning a large number of matches.
+
+========================================================
+43. DO NOT OVERENGINEER WITH AN SQL DATABASE
+========================================================
+
+Do not create a database.
+
+Do not require:
+
+MySQL
+PostgreSQL
+SQL Server
+Snowflake
+Oracle
+
+The tool must work offline using files.
+
+========================================================
+44. FINAL DELIVERABLE
+========================================================
+
+Build the complete project.
+
+I want actual working Python code, not pseudocode.
+
+Create all required files.
+
+At the end:
+
+1. Show the complete folder structure.
+2. Explain how the program works.
+3. Explain each Python file.
+4. Explain how hardcoded values are detected.
+5. Explain how false positives are reduced.
+6. Explain how to run the program.
+7. Explain how to add new detection rules.
+8. Provide sample input.
+9. Provide sample output.
+10. Provide test cases.
+11. Ensure the code runs without modification after installation of dependencies.
+
+Most importantly:
+
+DO NOT use an LLM.
+
+DO NOT use regex alone.
+
+Build this as a LOCAL PYTHON SQL STATIC ANALYSIS TOOL.
+
+One change I strongly recommend
+For your requirement, tell CoCo not to treat every quoted value as "hardcoded business value."
+The distinction should be:
+
+SQL Literal
+     │
+     ├── Date? ───────────────► DATE_LITERAL
+     │
+     ├── URL? ────────────────► URL
+     │
+     ├── ADF expression? ─────► DYNAMIC
+     │
+     ├── IN clause? ──────────► BUSINESS_CONSTANT
+     │
+     ├── Column comparison? ──► BUSINESS/STATUS CONSTANT
+     │
+     ├── File path? ──────────► FILE_PATH
+     │
+     └── Unknown? ───────────► REVIEW
